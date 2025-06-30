@@ -12,7 +12,16 @@ import {
   SolAccountType,
   SolScope,
 } from '@metamask/keyring-api';
-import { toFormattedAddress, areAddressesEqual } from '../util/address';
+import { areAddressesEqual } from '../util/address';
+import {
+  bufferedTrace,
+  bufferedEndTrace,
+  TraceName,
+  TraceOperation,
+} from '../util/trace';
+///: BEGIN:ONLY_INCLUDE_IF(seedless-onboarding)
+import ReduxService from './redux';
+///: END:ONLY_INCLUDE_IF(seedless-onboarding)
 
 /**
  * Restore the given serialized QR keyring.
@@ -210,6 +219,46 @@ export const recreateVaultWithNewPassword = async (
   const newPrimaryKeyringId = newPrimaryKeyring.metadata.id;
 
   // START: Restoring keyrings
+
+  ///: BEGIN:ONLY_INCLUDE_IF(seedless-onboarding)
+  const { SeedlessOnboardingController } = Engine.context;
+  // TODO: Fix with latest controller isCompleted
+  if (
+    ReduxService.store.getState().engine.backgroundState
+      .SeedlessOnboardingController.vault
+  ) {
+    let specificTraceSucceeded = false;
+    try {
+      bufferedTrace({
+        name: TraceName.OnboardingResetPassword,
+        op: TraceOperation.OnboardingSecurityOp,
+      });
+      await SeedlessOnboardingController.changePassword(newPassword, password);
+      specificTraceSucceeded = true;
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error';
+
+      bufferedTrace({
+        name: TraceName.OnboardingResetPasswordError,
+        op: TraceOperation.OnboardingError,
+        tags: { errorMessage },
+      });
+      bufferedEndTrace({
+        name: TraceName.OnboardingResetPasswordError,
+      });
+
+      Logger.error(error);
+      await KeyringController.createNewVaultAndRestore(password, primaryKeyringSeedPhrase);
+      throw new Error('Password change failed');
+    } finally {
+      bufferedEndTrace({
+        name: TraceName.OnboardingResetPassword,
+        data: { success: specificTraceSucceeded },
+      });
+    }
+  }
+  ///: END:ONLY_INCLUDE_IF(seedless-onboarding)
 
   if (serializedQrKeyring !== undefined) {
     await restoreQRKeyring(serializedQrKeyring);
